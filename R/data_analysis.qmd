@@ -1,0 +1,356 @@
+---
+title: "Data Analysis"
+author: "Group 1"
+format: html
+editor: visual
+---
+
+## Setup
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy = TRUE, tidy.opts = list(width.cutoff = 80))
+library(pacman)
+p_load(tidyverse, gtsummary, lubridate, here, janitor, naniar, writexl, readxl)
+```
+
+## Data Cleaning
+
+```{r}
+#Import Translated Data 
+data <- read_xlsx(here("data-raw/Data Translated.xlsx"), sheet = "data_lowercase",
+                  col_names = TRUE)
+
+#Export excel data to Rdata
+save(data, file = here("data/data.RData"))
+
+# Convert intervention_date and dob to Date format and calculate age and round down to nearest whole number
+data_cleaned1 <- data |> 
+    mutate(
+        intervention_date = mdy(intervention_date),  
+        dob = mdy(dob)  
+    ) |> 
+    mutate(
+        age = floor(as.numeric(interval(start = dob, end = intervention_date) / years(1)))
+    )
+
+# Convert necessary variables to character
+data_cleaned2 <- data_cleaned1 |> 
+    mutate(
+        province = as.character(province),
+        canton = as.character(canton),
+        promotor_id = as.character(promotor_id),
+        participant_id = as.character(participant_id),
+        consent_screening = as.character(consent_screening)
+    )
+
+# There is one missing value in province, but the canton is available. Azuay corresponds to the Cuencan canton. This is manually inputed 
+data_cleaned2 |> 
+    filter(is.na(province)) |> 
+    select(canton)
+data_cleaned2 <- data_cleaned2 |> 
+    mutate(province = ifelse(is.na(province) & canton == "cuenca", "azuay", province))
+
+# Convert binary variables while preserving missing values
+data_cleaned3 <- data_cleaned2 |> 
+    mutate(
+        poc = case_when(poc == "community center" ~ 0, 
+                        poc == "brigade" ~ 1, 
+                        TRUE ~ as.numeric(NA)), 
+        
+        intervention_type = case_when(intervention_type == "first time" ~ 0, 
+                                      intervention_type == "follow up" ~ 1, 
+                                      TRUE ~ as.numeric(NA)), 
+        
+        sex = case_when(sex == "male" ~ 0, 
+                        sex == "female" ~ 1, 
+                        TRUE ~ as.numeric(NA)), 
+        
+        intersex = case_when(intersex == "no" ~ 0, 
+                             intersex == "yes" ~ 1, 
+                             TRUE ~ as.numeric(NA)), 
+        
+        info_hiv = case_when(info_hiv == "no" ~ 0, 
+                             info_hiv == "yes" ~ 1, 
+                             TRUE ~ as.numeric(NA)), 
+        
+        lubricants = case_when(lubricants == "no" ~ 0, 
+                               lubricants == "yes" ~ 1, 
+                               TRUE ~ as.numeric(NA)), 
+        
+        condoms = case_when(condoms == "no" ~ 0, 
+                            condoms == "yes" ~ 1, 
+                            TRUE ~ as.numeric(NA)), 
+        
+        info_prep = case_when(info_prep == "no" ~ 0, 
+                              info_prep == "yes" ~ 1, 
+                              TRUE ~ as.numeric(NA)), 
+        
+        info_pep = case_when(info_pep == "no" ~ 0, 
+                             info_pep == "yes" ~ 1, 
+                             TRUE ~ as.numeric(NA)), 
+        
+        care_referral = case_when(care_referral == "no" ~ 0, 
+                                  care_referral == "yes" ~ 1, 
+                                  TRUE ~ as.numeric(NA)), 
+        
+        care_access = case_when(care_access == "no" ~ 0, 
+                                care_access == "yes" ~ 1, 
+                                TRUE ~ as.numeric(NA)), 
+        
+        treatment_msp = case_when(treatment_msp == "no" ~ 0, 
+                                  treatment_msp == "yes" ~ 1, 
+                                  TRUE ~ as.numeric(NA))
+    )
+
+# Convert categorical variables handling missing values
+data_cleaned4 <- data_cleaned3 |> 
+    mutate(
+        gender = case_when(
+            gender == "male" ~ 0,
+            gender == "female" ~ 1,
+            gender == "trans woman" ~ 2,
+            gender == "nr" ~ 3, # Preferred not to answer
+            TRUE ~ as.numeric(NA)
+        ),
+        
+        sexual_orientation = case_when(
+            sexual_orientation == "heterosexual" ~ 0,
+            sexual_orientation == "gay" ~ 1,
+            sexual_orientation == "lesbian" ~ 2,
+            sexual_orientation == "bisexual" ~ 3,
+            sexual_orientation == "nr" ~ 4, # Preferred not to answer
+            TRUE ~ as.numeric(NA)
+        ),
+        
+        nationality = case_when(
+            nationality == "ecuadorian" ~ 0,
+            nationality == "colombian" ~ 1,
+            nationality == "venezuelan" ~ 2,
+            nationality == "other" ~ 3,  
+            TRUE ~ as.numeric(NA)
+        ),
+        
+        ethnicity = case_when(
+            ethnicity == "white" ~ 0,
+            ethnicity == "black" ~ 1,
+            ethnicity == "indigenous" ~ 2,
+            ethnicity == "mestizo" ~ 3,
+            ethnicity == "montubio" ~ 4, 
+            ethnicity == "other" ~ 5,
+            TRUE ~ as.numeric(NA)
+        ),
+        
+        population = case_when(
+            population == "msm" ~ 0,
+            population == "sex_worker" ~ 1,
+            population == "trans" ~ 2,
+            population == "covid contact" ~ 3,
+            TRUE ~ as.numeric(NA)
+        ),
+        
+        first_test = case_when(
+            first_test == "negative" ~ 0,
+            first_test == "positive" ~ 1,
+            first_test == "nd" ~ 2, # Not done
+            TRUE ~ as.numeric(NA)
+        ),
+        
+        second_test = case_when(
+            second_test == "negative" ~ 0,
+            second_test == "positive" ~ 1,
+            second_test == "indetermined" ~ 2,  
+            second_test == "nd" ~ 3,  # Not done
+            TRUE ~ as.numeric(NA)
+        )
+    )
+
+#Export modified data to Rdata
+clean_data <- data_cleaned4
+save(clean_data, file = here("data/clean_data.RData"))
+
+```
+
+## Data Analysis Table 1: Demographics Stratified by HIV First Test Result
+
+```{r}
+# Load the cleaned dataset
+load(here("data", "clean_data.RData"))
+clean <- clean_data
+
+# Remove covid contact (coded as 3) from analysis
+clean_use <- clean |> 
+  filter(population != 3)
+
+# Table 1: Demographics stratified by HIV first test result and percentages per column
+# Recode categorical variables with labels as per the code book 
+clean_use <- clean_use |> 
+  mutate(
+    first_test = factor(first_test, 
+                        levels = c(0, 1, 2), 
+                        labels = c("Negative", "Positive", "Not Done")),
+    
+    nationality = factor(nationality, 
+                         levels = c(0, 1, 2, 3), 
+                         labels = c("Ecuadorian", "Colombian", "Venezuelan", "Other")),
+    
+    ethnicity = factor(ethnicity, 
+                       levels = c(0, 1, 2, 3, 4, 5), 
+                       labels = c("White", "Black", "Indigenous", "Mestizo", "Montubio", "Other")),
+    
+    sex = factor(sex, 
+                 levels = c(0, 1), 
+                 labels = c("Male (Assigned at Birth)", "Female (Assigned at Birth)")),
+    
+    gender = factor(gender, 
+                    levels = c(0, 1, 2, 3), 
+                    labels = c("Male", "Female", "Trans Woman", "Prefer Not to Answer")),
+    
+    sexual_orientation = factor(sexual_orientation, 
+                                levels = c(0, 1, 2, 3, 4), 
+                                labels = c("Heterosexual", "Gay", "Lesbian", "Bisexual", "Prefer Not to Answer")),
+    
+    population = factor(population, 
+                        levels = c(0, 1, 2), 
+                        labels = c("MSM", "Sex Worker", "Trans"))
+  )
+
+tbl1c <- tbl_summary(
+  data = clean_use,
+  by = first_test,  # Stratify by HIV first test result
+  include = c(nationality, ethnicity, age, sex, gender, sexual_orientation, population),
+  type = list(
+    age ~ "continuous",
+    all_categorical() ~ "categorical"
+  ),
+  label = list(
+    nationality ~ "Nationality",
+    ethnicity ~ "Ethnicity",
+    age ~ "Age (years)",
+    sex ~ "Sex Assigned at Birth",
+    gender ~ "Gender Identity",
+    sexual_orientation ~ "Sexual Orientation",
+    population ~ "Population Group"
+  ),
+  statistic = list(
+    all_continuous() ~ "{mean} ({sd})",
+    all_categorical() ~ "{n} ({p}%)"
+  ),
+  missing = "ifany",  # Show missing when present
+  missing_text = "Missing"
+) |> 
+  add_overall() |>
+  add_p() |> 
+  modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**HIV First Test Result**") |> 
+  bold_labels()
+
+tbl1c <- tbl1c |> modify_caption("**Table 1: Demographics Stratified by HIV First Test Result**")
+tbl1c
+
+# Table 1: Demographics stratified by HIV first test result and percentages per row
+tbl1r <- tbl_summary(
+  data = clean_use,
+  by = first_test,  # Stratify by HIV first test result
+  include = c(nationality, ethnicity, age, sex, gender, sexual_orientation, population),
+  type = list(
+    age ~ "continuous",
+    all_categorical() ~ "categorical"
+  ),
+  label = list(
+    nationality ~ "Nationality",
+    ethnicity ~ "Ethnicity",
+    age ~ "Age (years)",
+    sex ~ "Sex Assigned at Birth",
+    gender ~ "Gender Identity",
+    sexual_orientation ~ "Sexual Orientation",
+    population ~ "Population Group"
+  ),
+  statistic = list(
+    all_continuous() ~ "{mean} ({sd})",
+    all_categorical() ~ "{n} ({p}%)"
+  ),
+  percent = "row", 
+  missing = "ifany",
+  missing_text = "Missing"
+) |> 
+  add_overall() |>
+  add_p() |> 
+  modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**HIV First Test Result**") |> 
+  bold_labels()
+
+tbl1r <- tbl1r |> modify_caption("**Table 1: Demographics Stratified by HIV First Test Result**")
+tbl1r
+```
+
+## Data Analysis Table 2: Intervention-Related Variables Stratified by Risk Population
+
+```{r}
+# Load the cleaned dataset
+load(here("data", "clean_data.RData"))
+clean <- clean_data
+
+# Remove covid contact (coded as 3) from analysis
+clean_use2 <- clean |> 
+  filter(population != 3)
+
+# Recode categorical variables with labels
+clean_use2 <- clean_use2 |> 
+  mutate(
+    population = factor(population, 
+                        levels = c(0, 1, 2), 
+                        labels = c("MSM", "Sex Worker", "Trans")),
+    
+    poc = factor(poc, levels = c(0, 1), labels = c("Community Center", "Brigade")),
+    info_hiv = factor(info_hiv, levels = c(0, 1), labels = c("No", "Yes")),
+    info_prep = factor(info_prep, levels = c(0, 1), labels = c("No", "Yes")),
+    info_pep = factor(info_pep, levels = c(0, 1), labels = c("No", "Yes")),
+    condoms = factor(condoms, levels = c(0, 1), labels = c("No", "Yes")),
+    lubricants = factor(lubricants, levels = c(0, 1), labels = c("No", "Yes")),
+    
+    first_test = factor(first_test, levels = c(0, 1, 2), labels = c("Negative", "Positive", "Not Done")),
+    second_test = factor(second_test, levels = c(0, 1, 2, 3), labels = c("Negative", "Positive", "Indetermined", "Not Done")),
+    
+    care_referral = factor(care_referral, levels = c(0, 1), labels = c("No", "Yes")),
+    care_access = factor(care_access, levels = c(0, 1), labels = c("No", "Yes")),
+    treatment_msp = factor(treatment_msp, levels = c(0, 1), labels = c("No", "Yes"))
+  )
+
+# Table 2: Intervention-Related Variables Stratified by Risk Population
+tbl2 <- tbl_summary(
+  data = clean_use2,
+  by = population,  # Stratify by Risk Population
+  include = c(poc, info_hiv, info_prep, info_pep, condoms, lubricants, 
+              first_test, second_test, care_referral, care_access, treatment_msp, age),
+  type = list(
+    age ~ "continuous",
+    all_categorical() ~ "categorical"
+  ),
+  label = list(
+    poc ~ "Point of Contact",
+    info_hiv ~ "Received HIV Information",
+    info_prep ~ "Received PrEP Information",
+    info_pep ~ "Received PEP Information",
+    condoms ~ "Received Condoms",
+    lubricants ~ "Received Lubricants",
+    first_test ~ "First HIV Test Result",
+    second_test ~ "Confirmatory HIV Test Result",
+    care_referral ~ "Referred to Care",
+    care_access ~ "Accessed Care",
+    treatment_msp ~ "Received Treatment",
+    age ~ "Age (years)"
+  ),
+  statistic = list(
+    all_continuous() ~ "{mean} ({sd})",
+    all_categorical() ~ "{n} ({p}%)"
+  ),
+  missing = "ifany",  # Show missing if present
+  missing_text = "Missing"
+) |> 
+  add_overall() |>
+  add_p() |> 
+  modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**Risk Population Group**") |> 
+  bold_labels()
+
+tbl2 <- tbl2 |> modify_caption("**Table 2: Intervention-Related Variables Stratified by Risk Population**")
+
+tbl2
+```
