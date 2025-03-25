@@ -167,7 +167,6 @@ data_cleaned4 <- data_cleaned3 |>
 #Export modified data to Rdata
 clean_data <- data_cleaned4
 save(clean_data, file = here("data/clean_data.RData"))
-
 ```
 
 ## Data Analysis Table 1: Demographics Stratified by HIV First Test Result
