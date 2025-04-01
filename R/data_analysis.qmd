@@ -10,15 +10,19 @@ editor: visual
 ```{r, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, tidy = TRUE, tidy.opts = list(width.cutoff = 80))
 library(pacman)
-p_load(tidyverse, gtsummary, lubridate, here, janitor, naniar, writexl, readxl)
+p_load(tidyverse, gtsummary, lubridate, here, janitor, naniar, writexl, readxl, flextable,
+       officer, dplyr, knitr, kableExtra)
 ```
 
 ## Data Cleaning
 
 ```{r}
 #Import Translated Data 
-data <- read_xlsx(here("data-raw/Data Translated.xlsx"), sheet = "data_lowercase",
-                  col_names = TRUE)
+data <- readxl::read_xlsx(
+  path = here("data-raw", "Data Translated.xlsx"),
+  sheet = "data_lowercase",
+  col_names = TRUE
+)
 
 #Export excel data to Rdata
 save(data, file = here("data/data.RData"))
@@ -234,11 +238,10 @@ tbl1c <- tbl_summary(
     all_continuous() ~ "{mean} ({sd})",
     all_categorical() ~ "{n} ({p}%)"
   ),
-  missing = "ifany",  # Show missing when present
+  missing = "ifany", 
   missing_text = "Missing"
 ) |> 
   add_overall() |>
-  add_p() |> 
   modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**HIV First Test Result**") |> 
   bold_labels()
 
@@ -272,12 +275,30 @@ tbl1r <- tbl_summary(
   missing_text = "Missing"
 ) |> 
   add_overall() |>
-  add_p() |> 
   modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**HIV First Test Result**") |> 
   bold_labels()
 
 tbl1r <- tbl1r |> modify_caption("**Table 1: Demographics Stratified by HIV First Test Result**")
 tbl1r
+
+# Merge column and row percentage versions of Table 1
+tbl1_merged <- tbl_merge(
+  tbls = list(tbl1c, tbl1r),
+  tab_spanner = c("**Column Percentages**", "**Row Percentages**")
+)
+
+tbl1_merged <- tbl1_merged |> 
+  modify_caption("**Table 1: Demographic Characteristics Stratified by HIV First Test Result (Column and Row Percentages)**")
+
+# Display Table 1
+tbl1_merged
+
+# Export the final Table 1 to Word
+tbl1_doc <- as_flex_table(tbl1_merged)
+doc <- read_docx() |> 
+  body_add_flextable(tbl1_doc) |> 
+  body_add_par("")
+print(doc, target = here("Outputs", "Table1.docx"))
 ```
 
 ## Data Analysis Table 2: Intervention-Related Variables Stratified by Risk Population
@@ -291,7 +312,7 @@ clean <- clean_data
 clean_use2 <- clean |> 
   filter(population != 3)
 
-# Recode categorical variables with labels
+# Recode only necessary variables for Table 2
 clean_use2 <- clean_use2 |> 
   mutate(
     population = factor(population, 
@@ -304,25 +325,16 @@ clean_use2 <- clean_use2 |>
     info_pep = factor(info_pep, levels = c(0, 1), labels = c("No", "Yes")),
     condoms = factor(condoms, levels = c(0, 1), labels = c("No", "Yes")),
     lubricants = factor(lubricants, levels = c(0, 1), labels = c("No", "Yes")),
-    
-    first_test = factor(first_test, levels = c(0, 1, 2), labels = c("Negative", "Positive", "Not Done")),
-    second_test = factor(second_test, levels = c(0, 1, 2, 3), labels = c("Negative", "Positive", "Indetermined", "Not Done")),
-    
-    care_referral = factor(care_referral, levels = c(0, 1), labels = c("No", "Yes")),
-    care_access = factor(care_access, levels = c(0, 1), labels = c("No", "Yes")),
-    treatment_msp = factor(treatment_msp, levels = c(0, 1), labels = c("No", "Yes"))
+    first_test = factor(first_test, levels = c(0, 1, 2), 
+                        labels = c("Negative", "Positive", "Not Done"))
   )
 
-# Table 2: Intervention-Related Variables Stratified by Risk Population
+# Create Table 2: Intervention-Related Variables Stratified by Risk Population
 tbl2 <- tbl_summary(
   data = clean_use2,
-  by = population,  # Stratify by Risk Population
-  include = c(poc, info_hiv, info_prep, info_pep, condoms, lubricants, 
-              first_test, second_test, care_referral, care_access, treatment_msp, age),
-  type = list(
-    age ~ "continuous",
-    all_categorical() ~ "categorical"
-  ),
+  by = population,
+  include = c(poc, info_hiv, info_prep, info_pep, condoms, lubricants, first_test),
+  type = all_categorical() ~ "categorical",
   label = list(
     poc ~ "Point of Contact",
     info_hiv ~ "Received HIV Information",
@@ -330,7 +342,73 @@ tbl2 <- tbl_summary(
     info_pep ~ "Received PEP Information",
     condoms ~ "Received Condoms",
     lubricants ~ "Received Lubricants",
-    first_test ~ "First HIV Test Result",
+    first_test ~ "First HIV Test Result"
+  ),
+  statistic = all_categorical() ~ "{n} ({p}%)",
+  missing = "ifany",
+  missing_text = "Missing"
+) |> 
+  add_overall() |> 
+  modify_spanning_header(c("stat_0", "stat_1", "stat_2", "stat_3") ~ "**Risk Population Group**") |> 
+  bold_labels() |> 
+  modify_caption("**Table 2: Intervention-Related Variables Stratified by Risk Population**")
+
+# Display Table 2
+tbl2
+
+# Export Table 2 to Word
+tbl2_doc <- as_flex_table(tbl2)
+doc <- read_docx() |> 
+  body_add_flextable(tbl2_doc) |> 
+  body_add_par("")
+print(doc, target = here("Outputs", "Table2.docx"))
+```
+
+## Data Analysis Table 3: Outcome-Related Variables Stratified by Risk Population
+
+```{r}
+# Load the cleaned dataset
+load(here("data", "clean_data.RData"))
+clean <- clean_data
+
+# Restrict the analysis to participants with a positive HIV screening test and remove covid contact (coded as 3) from the analysis
+clean_use3 <- clean |> 
+  filter(first_test == 1, population != 3)
+
+# Recode relevant variables with labels
+clean_use3 <- clean_use3 |> 
+  mutate(
+    population = factor(population, 
+                        levels = c(0, 1, 2), 
+                        labels = c("MSM", "Sex Worker", "Trans")),
+    
+    second_test = factor(second_test, 
+                         levels = c(0, 1, 2, 3),
+                         labels = c("Negative", "Positive", "Indetermined", "Not Done")),
+    
+    care_referral = factor(care_referral, 
+                           levels = c(0, 1), 
+                           labels = c("No", "Yes")),
+    
+    care_access = factor(care_access, 
+                         levels = c(0, 1), 
+                         labels = c("No", "Yes")),
+    
+    treatment_msp = factor(treatment_msp, 
+                           levels = c(0, 1), 
+                           labels = c("No", "Yes"))
+  )
+
+# Create Table 3: Care Continuum Among Participants with a Positive HIV Screening Test, Stratified by Risk Population Group
+tbl3 <- tbl_summary(
+  data = clean_use3,
+  by = population,
+  include = c(second_test, care_referral, care_access, treatment_msp, age),
+  type = list(
+    age ~ "continuous",
+    all_categorical() ~ "categorical"
+  ),
+  label = list(
     second_test ~ "Confirmatory HIV Test Result",
     care_referral ~ "Referred to Care",
     care_access ~ "Accessed Care",
@@ -341,15 +419,190 @@ tbl2 <- tbl_summary(
     all_continuous() ~ "{mean} ({sd})",
     all_categorical() ~ "{n} ({p}%)"
   ),
-  missing = "ifany",  # Show missing if present
+  missing = "ifany",
   missing_text = "Missing"
 ) |> 
-  add_overall() |>
-  add_p() |> 
-  modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**Risk Population Group**") |> 
-  bold_labels()
+  add_overall() |> 
+  modify_spanning_header(c("stat_0", "stat_1", "stat_2", "stat_3") ~ "**Risk Population Group**") |> 
+  bold_labels() |> 
+  modify_caption("**Table 3: Care Continuum Among Participants with a Positive HIV Screening Test, Stratified by Risk Population Group**")
 
-tbl2 <- tbl2 |> modify_caption("**Table 2: Intervention-Related Variables Stratified by Risk Population**")
+# Display Table 3
+tbl3
 
-tbl2
+# Export Table 3 to Word
+tbl3_doc <- as_flex_table(tbl3)
+doc <- read_docx() |> 
+  body_add_flextable(tbl3_doc) |> 
+  body_add_par("")
+print(doc, target = here("Outputs", "Table3.docx"))
+```
+
+## Data Analysis Table 4: Exploratory Demographic Profile of Participants with a Positive HIV Screening Test
+
+```{r}
+# Load the cleaned dataset
+load(here("data", "clean_data.RData"))
+clean <- clean_data
+
+# Restrict to participants with a positive HIV screening test and exclude COVID contacts
+clean_use4 <- clean |> 
+  filter(first_test == 1, population != 3)
+
+# Recode relevant variables
+clean_use4 <- clean_use4 |> 
+  mutate(
+    population = factor(population, 
+                        levels = c(0, 1, 2), 
+                        labels = c("MSM", "Sex Worker", "Trans")),
+    
+    nationality = factor(nationality, 
+                         levels = c(0, 1, 2, 3), 
+                         labels = c("Ecuadorian", "Colombian", "Venezuelan", "Other")),
+    
+    ethnicity = factor(ethnicity, 
+                       levels = c(0, 1, 2, 3, 4, 5), 
+                       labels = c("White", "Black", "Indigenous", "Mestizo", "Montubio", "Other")),
+    
+    sex = factor(sex, 
+                 levels = c(0, 1), 
+                 labels = c("Male (Assigned at Birth)", "Female (Assigned at Birth)")),
+    
+    gender = factor(gender, 
+                    levels = c(0, 1, 2, 3), 
+                    labels = c("Male", "Female", "Trans Woman", "Prefer Not to Answer")),
+    
+    sexual_orientation = factor(sexual_orientation, 
+                                levels = c(0, 1, 2, 3, 4), 
+                                labels = c("Heterosexual", "Gay", "Lesbian", "Bisexual", "Prefer Not to Answer")),
+    
+    second_test = factor(second_test, 
+                         levels = c(0, 1, 2, 3), 
+                         labels = c("Negative", "Positive", "Indetermined", "Not Done"))
+  )
+
+# Table 4 - Column percentages
+tbl4_col <- tbl_summary(
+  data = clean_use4,
+  by = population,
+  include = c(nationality, ethnicity, age, sex, gender, sexual_orientation, second_test),
+  type = list(
+    age ~ "continuous",
+    all_categorical() ~ "categorical"
+  ),
+  label = list(
+    nationality ~ "Nationality",
+    ethnicity ~ "Ethnicity",
+    age ~ "Age (years)",
+    sex ~ "Sex Assigned at Birth",
+    gender ~ "Gender Identity",
+    sexual_orientation ~ "Sexual Orientation",
+    second_test ~ "Confirmatory HIV Test Result"
+  ),
+  statistic = list(
+    all_continuous() ~ "{mean} ({sd})",
+    all_categorical() ~ "{n} ({p}%)"
+  ),
+  percent = "column",
+  missing = "ifany",
+  missing_text = "Missing"
+) |> 
+  add_overall()
+
+# Table 4 - Row percentages
+tbl4_row <- tbl_summary(
+  data = clean_use4,
+  by = population,
+  include = c(nationality, ethnicity, age, sex, gender, sexual_orientation, second_test),
+  type = list(
+    age ~ "continuous",
+    all_categorical() ~ "categorical"
+  ),
+  label = list(
+    nationality ~ "Nationality",
+    ethnicity ~ "Ethnicity",
+    age ~ "Age (years)",
+    sex ~ "Sex Assigned at Birth",
+    gender ~ "Gender Identity",
+    sexual_orientation ~ "Sexual Orientation",
+    second_test ~ "Confirmatory HIV Test Result"
+  ),
+  statistic = list(
+    all_continuous() ~ "{mean} ({sd})",
+    all_categorical() ~ "{n} ({p}%)"
+  ),
+  percent = "row",
+  missing = "ifany",
+  missing_text = "Missing"
+) |> 
+  add_overall()
+
+# Merge both versions
+tbl4_merged <- tbl_merge(
+  tbls = list(tbl4_col, tbl4_row),
+  tab_spanner = c("**Column Percentages**", "**Row Percentages**")
+) |> 
+  bold_labels() |> 
+  modify_caption("**Table 4: Demographic Profile and Confirmatory HIV Test Results Among Participants with a Positive HIV Screening Test, Stratified by Risk Population Group (Column and Row Percentages)**")
+
+# Display Table 4
+tbl4_merged
+
+# Export Table 4 to Word
+tbl4_doc <- as_flex_table(tbl4_merged)
+doc <- read_docx() |> 
+  body_add_flextable(tbl4_doc) |> 
+  body_add_par("")
+print(doc, target = here("Outputs", "Table4.docx"))
+```
+
+## Data Analysis Table 5: HIV Positivity Rates and Proportional Burden by Risk Population Group
+
+```{r}
+# Load cleaned data
+load(here("data", "clean_data.RData"))
+clean <- clean_data
+
+# Remove COVID contacts and non-missing HIV test results
+clean_use5 <- clean |> 
+  filter(population != 3) |> 
+  mutate(population = factor(population, 
+                             levels = c(0, 1, 2), 
+                             labels = c("MSM", "Sex Worker", "Trans")))
+
+# Summarize Table 5 metrics
+table5 <- clean_use5 |> 
+  group_by(population) |> 
+  summarise(
+    `Number Tested` = sum(!is.na(first_test)),
+    `Number Testing Positive` = sum(first_test == 1, na.rm = TRUE),
+    .groups = "drop"
+  ) |> 
+  mutate(
+    `Proportion HIV Positive (%)` = round(`Number Testing Positive` / `Number Tested` * 100, 1),
+    `% of All Detected Positives` = round(`Number Testing Positive` / sum(`Number Testing Positive`) * 100, 1)
+  )
+
+# Render Table 5
+table5 |> 
+  kbl(
+    caption = "Table 5: HIV Positivity Proportion and Proportional Burden by Risk Population Group",
+    col.names = c("Risk Population Group", "Number Tested", "Number Testing Positive", 
+                  "Proportion HIV Positive (%)", "% of All Detected Positives"),
+    align = "lrrrr",
+    format = "html"
+  ) |> 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), 
+                full_width = FALSE, position = "center")
+
+# Export Table 5 to Word
+table5_flex <- table5 |> 
+  flextable() |> 
+  autofit() |> 
+  set_caption("Table 5: HIV Positivity Proportion and Proportional Burden by Risk Population Group")
+
+doc <- read_docx() |> 
+  body_add_flextable(table5_flex) |> 
+  body_add_par("")
+print(doc, target = here("Outputs", "Table5.docx"))
 ```
